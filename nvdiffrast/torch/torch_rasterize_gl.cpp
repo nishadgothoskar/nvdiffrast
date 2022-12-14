@@ -10,6 +10,7 @@
 #include "torch_types.h"
 #include "../common/common.h"
 #include "../common/rasterize_gl.h"
+
 #include <tuple>
 
 //------------------------------------------------------------------------
@@ -47,6 +48,8 @@ void RasterizeGLStateWrapper::releaseContext(void)
 
 //------------------------------------------------------------------------
 // Forward op (OpenGL).
+
+void threedp3_likelihood(float *pos, float time, int width, int height, int depth);
 
 std::tuple<torch::Tensor, torch::Tensor> rasterize_fwd_gl(RasterizeGLStateWrapper& stateWrapper, torch::Tensor pos, torch::Tensor tri, std::tuple<int, int> resolution, torch::Tensor ranges, int peeling_idx)
 {
@@ -111,16 +114,47 @@ std::tuple<torch::Tensor, torch::Tensor> rasterize_fwd_gl(RasterizeGLStateWrappe
     int vtxPerInstance = instance_mode ? pos.size(1) : 0;
     rasterizeRender(NVDR_CTX_PARAMS, s, stream, posPtr, posCount, vtxPerInstance, triPtr, triCount, rangesPtr, width, height, depth, peeling_idx);
 
+    unsigned int bytes = depth*height*width*4*sizeof(float);
+
+    float* outputPtr[2];
+    outputPtr[1] = NULL;
+
+    float *da;
+    cudaMalloc((void**)&da, bytes);
+    
+    outputPtr[0] = da;
+    rasterizeCopyResults(NVDR_CTX_PARAMS, s, stream, outputPtr, width, height, depth);
+
+    // float* ha = (float*)malloc(bytes);
+    // cudaMemcpy(ha, da, bytes, cudaMemcpyDeviceToHost);
+    // std::cout << "ha[0] : " << ha[0] << std::endl;
+    // std::cout << "ha[1] : " << ha[1] << std::endl;
+    // std::cout << "ha[2] : " << ha[2] << std::endl;
+    // std::cout << "ha[3] : " << ha[3] << std::endl;
+    // std::cout << "ha[4] : " << ha[4] << std::endl;
+
+    std::cout << height << " " << width << " " << depth << " " << std::endl;
+
+    // dim3 blockSize(depth, 1, 1);
+    // dim3 gridSize(height,width, 1);
+    // float r = 4.0;
+    // void* args[] = {&da, &r, &width, &height, &depth};
+    // cudaLaunchKernel((void*)threedp3_likelihood, gridSize, blockSize, args, 0, stream);
+
+
     // Allocate output tensors.
     torch::TensorOptions opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
-    torch::Tensor out = torch::empty({depth, height, width, 4}, opts);
+    torch::Tensor out = torch::empty({depth* height * width * 4}, opts);
     torch::Tensor out_db = torch::empty({depth, height, width, s.enableDB ? 4 : 0}, opts);
-    float* outputPtr[2];
-    outputPtr[0] = out.data_ptr<float>();
-    outputPtr[1] = s.enableDB ? out_db.data_ptr<float>() : NULL;
+    
+    cudaMemcpy(out.data_ptr<float>(), da, bytes, cudaMemcpyDeviceToDevice);
 
-    // Copy rasterized results into CUDA buffers.
-    rasterizeCopyResults(NVDR_CTX_PARAMS, s, stream, outputPtr, width, height, depth);
+
+    // float* outputPtr2[2];
+    // outputPtr2[0] = out.data_ptr<float>();
+    // outputPtr2[1] = NULL;
+
+    // rasterizeCopyResults(NVDR_CTX_PARAMS, s, stream, outputPtr2, width, height, depth);
 
     // Done. Release GL context and return.
     if (stateWrapper.automatic)
@@ -128,5 +162,7 @@ std::tuple<torch::Tensor, torch::Tensor> rasterize_fwd_gl(RasterizeGLStateWrappe
 
     return std::tuple<torch::Tensor, torch::Tensor>(out, out_db);
 }
+
+
 
 //------------------------------------------------------------------------

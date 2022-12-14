@@ -63,6 +63,7 @@ def _get_plugin(gl=False):
             '../common/rasterize_gl.cpp',
             'torch_bindings_gl.cpp',
             'torch_rasterize_gl.cpp',
+            'likelihood.cu',
         ]
     else:
         source_files = [
